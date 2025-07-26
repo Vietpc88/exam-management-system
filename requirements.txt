@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+python-dotenv
+bcrypt
+openpyxl
+xlsxwriter
+google-generativeai
+pillow
+mammoth
+python-docxsupabase>=1.0.0
