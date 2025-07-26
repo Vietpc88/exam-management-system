@@ -8,4 +8,5 @@ xlsxwriter
 google-generativeai
 pillow
 mammoth
-python-docxsupabase
+python-docx
+supabase
