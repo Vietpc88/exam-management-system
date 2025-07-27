@@ -1,0 +1,12 @@
+streamlit
+pandas
+numpy
+python-dotenv
+bcrypt
+openpyxl
+xlsxwriter
+google-generativeai
+pillow
+mammoth
+python-docx
+supabase

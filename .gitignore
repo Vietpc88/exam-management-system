@@ -1,0 +1,19 @@
+# Environment variables
+.env
+.streamlit/secrets.toml
+
+# Database
+database/exam_system.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Uploads
+uploads/*
+!uploads/.gitkeep
