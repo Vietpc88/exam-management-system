@@ -492,7 +492,10 @@ class WordExamParser:
 
 def show_upload_word_exam():
     """Giao diện upload với logic parser chuẩn và ánh xạ hình ảnh chính xác"""
-    st.subheader("📄 Upload đề thi từ file Word")
+    st.markdown(
+    "<h4 style='font-size:18px;'>📄 Upload đề thi từ file Word</h4>", 
+    unsafe_allow_html=True
+)
     
     with st.expander("📚 Hướng dẫn định dạng file Word", expanded=False):
         st.markdown("""
@@ -630,21 +633,58 @@ def show_detailed_questions_preview(questions: List[Dict], parser: WordExamParse
             col1.caption(f"Điểm: {q['points']}")
             col2.caption(f"Độ khó: {q['difficulty']}")
 
-def import_questions_to_exam(questions: List[Dict], parser: WordExamParser):
-    """Import câu hỏi vào session_state"""
+def import_questions_to_exam(questions: list, parser):
+    """Import câu hỏi vào session_state - SỬA: Giữ nguyên cấu trúc ban đầu"""
     try:
-        converted_questions = parser.convert_to_exam_format(questions)
-        
+        # KHÔNG CHUYỂN ĐỔI - Giữ nguyên cấu trúc từ parser
         if "exam_questions" not in st.session_state:
             st.session_state.exam_questions = []
         
-        st.session_state.exam_questions.extend(converted_questions)
+        # Import trực tiếp without conversion để giữ nguyên cấu trúc
+        imported_count = 0
+        for q in questions:
+            # Đảm bảo có các trường cần thiết cho exam format
+            exam_question = {
+                'type': q['type'],
+                'question': q['question'],
+                'points': q.get('points', 1.0),
+                'difficulty': q.get('difficulty', 'Trung bình'),
+                'solution': q.get('solution', ''),
+                'image_data': q.get('image_base64') or None  # Đổi tên field
+            }
+            
+            if q['type'] == 'multiple_choice':
+                exam_question.update({
+                    'options': [q['option_a'], q['option_b'], q['option_c'], q['option_d']],
+                    'correct_answer': q['correct_answer']
+                })
+            elif q['type'] == 'true_false':
+                # QUAN TRỌNG: Giữ nguyên cấu trúc statements
+                exam_question.update({
+                    'statements': q['statements'],
+                    'correct_answers': q['correct_answers']
+                })
+            elif q['type'] == 'short_answer':
+                exam_question.update({
+                    'sample_answers': q.get('sample_answers', [q.get('correct_answer', '')]),
+                    'case_sensitive': q.get('case_sensitive', False)
+                })
+            elif q['type'] == 'essay':
+                exam_question.update({
+                    'grading_criteria': q.get('grading_criteria', 'Chấm bằng hình ảnh do học sinh nộp'),
+                    'submission_type': q.get('submission_type', 'image_upload'),
+                    'requires_image': True
+                })
+            
+            st.session_state.exam_questions.append(exam_question)
+            imported_count += 1
         
-        st.success(f"✅ Đã import thành công {len(converted_questions)} câu hỏi vào đề thi!")
-        st.info("💡 Chuyển sang tab 'Soạn đề thi' để xem và chỉnh sửa.")
+        st.success(f"✅ Đã import thành công {imported_count} câu hỏi vào đề thi!")
+        st.info("💡 Chuyển sang tab 'Quản lý' để xem danh sách câu hỏi đã import")
         
     except Exception as e:
         st.error(f"❌ Lỗi khi import: {str(e)}")
+        st.code(str(e))  # Debug info
 
 # Hàm render MathJax để hỗ trợ LaTeX
 def render_mathjax():

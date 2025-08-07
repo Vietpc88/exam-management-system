@@ -3,14 +3,16 @@ import json
 import pandas as pd
 import base64
 import io
+import os
 import random
+import pytz
 from datetime import datetime, timedelta
 from database.supabase_models import get_database
 from auth.login import get_current_user
-
+LOCAL_TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Asia/Ho_Chi_Minh"))
 # Safe imports
 try:
-    from teacher.word_parser import show_upload_word_exam, render_mathjax
+    from admin.word_parser import show_upload_word_exam, render_mathjax
 except ImportError:
     def render_mathjax():
         st.markdown("""
@@ -23,17 +25,120 @@ except ImportError:
         };
         </script>
         """, unsafe_allow_html=True)
+def load_exam_data_into_session(exam_id, is_cloning=False):
+    """Tải dữ liệu của một đề thi vào session state để sửa hoặc nhân bản."""
+    db = get_database()
+    exam_details = db.get_exam_by_id(exam_id) # Hàm này đã có trong wrapper của bạn
+    if not exam_details:
+        st.error(f"Không thể tải dữ liệu cho đề thi ID: {exam_id}")
+        return False
 
+    # Xóa dữ liệu cũ trước khi tải
+    clear_exam_data()
+
+    # Tải dữ liệu vào session state
+    st.session_state.exam_title = exam_details.get('title', '')
+    st.session_state.exam_description = exam_details.get('description', '')
+    st.session_state.exam_instructions = exam_details.get('instructions', '')
+    st.session_state.exam_time_limit = exam_details.get('time_limit', 60)
+    st.session_state.exam_questions = exam_details.get('questions', [])
+
+    if is_cloning:
+        # Nếu nhân bản, thêm chữ [Bản sao] và reset thông tin lớp/thời gian
+        st.session_state.exam_title += " [Bản sao]"
+        st.session_state.exam_class_id = None # Bắt buộc chọn lại lớp
+        # Đặt thời gian mặc định là hiện tại
+        st.session_state.exam_start_date = datetime.now().date()
+        st.session_state.exam_start_time = datetime.now().time()
+        st.session_state.exam_end_date = (datetime.now() + timedelta(days=7)).date()
+        st.session_state.exam_end_time = datetime.now().time()
+        st.success(f"Đã nhân bản đề thi '{exam_details['title']}'. Vui lòng cập nhật thông tin và lưu lại như một đề mới.")
+    else: # Đang sửa
+        st.session_state.editing_exam_id_value = exam_id # Lưu ID để biết là đang update
+        st.session_state.exam_class_id = exam_details.get('class_id')
+        
+        # Tải lại thời gian đã lưu
+        try:
+            start_dt = datetime.fromisoformat(exam_details['start_time']).astimezone(LOCAL_TIMEZONE)
+            end_dt = datetime.fromisoformat(exam_details['end_time']).astimezone(LOCAL_TIMEZONE)
+            st.session_state.exam_start_date = start_dt.date()
+            st.session_state.exam_start_time = start_dt.time()
+            st.session_state.exam_end_date = end_dt.date()
+            st.session_state.exam_end_time = end_dt.time()
+        except: # Fallback nếu thời gian không hợp lệ
+            st.session_state.exam_start_date = datetime.now().date()
+            st.session_state.exam_start_time = datetime.now().time()
+        
+        st.success(f"Đang sửa đề thi '{exam_details['title']}'.")
+
+    return True
+def update_existing_exam(user):
+    """Cập nhật một đề thi đã có."""
+    try:
+        exam_id = st.session_state.get('editing_exam_id_value')
+        if not exam_id:
+            st.error("Lỗi: Không tìm thấy ID của đề thi đang sửa.")
+            return
+
+        exam_data = prepare_exam_data(user, is_published=False) # is_published sẽ được xử lý riêng
+        db = get_database()
+
+        # Chuẩn bị dữ liệu để update
+        update_payload = {
+            'title': exam_data['title'],
+            'description': exam_data['description'],
+            'instructions': exam_data['instructions'],
+            'class_id': exam_data['class_id'],
+            'questions': exam_data['questions'],
+            'time_limit': exam_data['time_limit'],
+            'start_time': exam_data['start_time'],
+            'end_time': exam_data['end_time'],
+        }
+
+        if db.update_exam(exam_id, **update_payload):
+            st.success("✅ Đã cập nhật đề thi thành công!")
+            # Tùy chọn: hỏi có muốn phát hành không nếu nó là bản nháp
+            # ...
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("⬅️ Quay lại trang quản lý", use_container_width=True):
+                    st.session_state.current_page = "exam_management"
+                    clear_exam_data()
+                    st.rerun()
+            with col2:
+                if st.button("➕ Tạo đề thi khác", use_container_width=True):
+                    clear_exam_data()
+                    st.rerun()
+        else:
+            st.error("❌ Có lỗi xảy ra khi cập nhật đề thi.")
+
+    except Exception as e:
+        st.error(f"❌ Lỗi khi cập nhật đề thi: {e}")
 def show_create_exam():
-    """Giao diện tạo đề thi hoàn chỉnh với tích hợp word parser"""
-    st.header("📝 Tạo đề thi mới")
+   
+    db = get_database()
+    
+    if 'edit_exam_id' in st.session_state:
+        exam_id = st.session_state.edit_exam_id
+        del st.session_state.edit_exam_id # Xóa key để không chạy lại
+        load_exam_data_into_session(exam_id, is_cloning=False)
+        st.rerun()
+    elif 'clone_exam_id' in st.session_state:
+        exam_id = st.session_state.clone_exam_id
+        del st.session_state.clone_exam_id # Xóa key để không chạy lại
+        load_exam_data_into_session(exam_id, is_cloning=True)
+        st.rerun()
+    page_title = "📝 Tạo đề thi mới"
+    if st.session_state.get('editing_exam_id_value'):
+        page_title = f"✏️ Sửa đề thi: {st.session_state.get('exam_title', '')}"
+    
+    st.header(page_title)
     
     user = get_current_user()
-    db = get_database()
     
     # Lấy danh sách lớp từ database
     try:
-        classes_data = db.get_classes_by_teacher(user['id'])
+        classes_data = db.get_all_classes()
         
         # Convert to format expected by UI
         classes = []
@@ -86,7 +191,8 @@ def show_create_exam():
         show_preview_tab()
     
     with tab4:
-        show_complete_tab(user)
+        is_editing = 'editing_exam_id_value' in st.session_state
+        show_complete_tab(user, is_editing)
 
 def show_exam_creation_guide():
     """Hiển thị hướng dẫn tạo đề thi"""
@@ -244,7 +350,7 @@ def show_add_questions_tab():
         show_manual_question_input()
     
     with subtab2:
-        st.write("### 📄 Import từ file Word")
+        
         try:
             show_upload_word_exam()
         except Exception as e:
@@ -258,12 +364,14 @@ def show_add_questions_tab():
     with subtab4:
         show_point_distribution()
 
-def import_questions_to_exam(questions: list, parser=None):
-    """Import câu hỏi vào session_state - Tích hợp với word_parser.py"""
+def import_questions_to_exam(questions: list, parser):
+    """Import câu hỏi vào session_state - SỬA: Giữ nguyên cấu trúc ban đầu"""
     try:
+        # KHÔNG CHUYỂN ĐỔI - Giữ nguyên cấu trúc từ parser
         if "exam_questions" not in st.session_state:
             st.session_state.exam_questions = []
         
+        # Import trực tiếp without conversion để giữ nguyên cấu trúc
         imported_count = 0
         for q in questions:
             # Đảm bảo có các trường cần thiết cho exam format
@@ -273,7 +381,7 @@ def import_questions_to_exam(questions: list, parser=None):
                 'points': q.get('points', 1.0),
                 'difficulty': q.get('difficulty', 'Trung bình'),
                 'solution': q.get('solution', ''),
-                'image_data': q.get('image_base64') or None
+                'image_data': q.get('image_base64') or None  # Đổi tên field
             }
             
             if q['type'] == 'multiple_choice':
@@ -282,6 +390,7 @@ def import_questions_to_exam(questions: list, parser=None):
                     'correct_answer': q['correct_answer']
                 })
             elif q['type'] == 'true_false':
+                # QUAN TRỌNG: Giữ nguyên cấu trúc statements
                 exam_question.update({
                     'statements': q['statements'],
                     'correct_answers': q['correct_answers']
@@ -306,6 +415,7 @@ def import_questions_to_exam(questions: list, parser=None):
         
     except Exception as e:
         st.error(f"❌ Lỗi khi import: {str(e)}")
+        st.code(str(e))  # Debug info
 
 def show_manual_question_input():
     """Giao diện thêm câu hỏi thủ công"""
@@ -329,6 +439,11 @@ def show_manual_question_input():
                     }
                     st.write(f"**Loại:** {type_names[question['type']]}")
                     st.write(f"**Câu hỏi:** {question['question']}")
+                    if question.get('image_data'):
+                        try:
+                            st.image(base64.b64decode(question['image_data']), width=150)
+                        except:
+                            st.caption("🖼️ Có ảnh đính kèm")
                     st.write(f"**Điểm:** {question['points']}")
                     
                     if question['type'] == 'multiple_choice':
@@ -402,6 +517,18 @@ def show_question_form():
             height=100
         )
         
+        ### <<< THÊM MỚI: Phần tải ảnh lên >>>
+        uploaded_image = st.file_uploader(
+            "Tải ảnh minh họa cho câu hỏi (tùy chọn)",
+            type=['png', 'jpg', 'jpeg'],
+            key="question_image_uploader"
+        )
+        
+        # Hiển thị ảnh hiện tại (nếu đang sửa và đã có ảnh)
+        if is_editing and current_question.get('image_data'):
+            st.image(base64.b64decode(current_question['image_data']), width=200, caption="Ảnh hiện tại")
+        ### <<< KẾT THÚC PHẦN THÊM MỚI >>>
+        
         col1, col2 = st.columns(2)
         with col1:
             points = st.number_input(
@@ -448,6 +575,17 @@ def show_question_form():
         with col1:
             submit_text = "💾 Cập nhật câu hỏi" if is_editing else "✅ Thêm câu hỏi"
             if st.form_submit_button(submit_text, use_container_width=True):
+                ### <<< THÊM MỚI: Xử lý dữ liệu ảnh trước khi lưu >>>
+                if uploaded_image:
+                    img_bytes = uploaded_image.getvalue()
+                    base64_string = base64.b64encode(img_bytes).decode('utf-8')
+                    question_data['image_data'] = base64_string
+                elif is_editing and 'image_data' in current_question:
+                    question_data['image_data'] = current_question['image_data']
+                else:
+                    question_data['image_data'] = None
+                ### <<< KẾT THÚC PHẦN THÊM MỚI >>>
+
                 if validate_and_save_question(question_data, is_editing):
                     st.rerun()
         
@@ -558,9 +696,10 @@ def show_essay_form(question_data, current_question):
     )
     
     grading_rubric = st.text_area(
-        "Tiêu chí chấm điểm", 
+        "Tiêu chí chấm điểm (Rubric for AI) *", 
         value=current_question.get('grading_criteria', ''),
-        placeholder="Mô tả tiêu chí chấm điểm cho câu tự luận..."
+        placeholder="Mô tả chi tiết tiêu chí chấm điểm cho câu tự luận để AI dựa vào đó chấm bài. Ví dụ:\n- Trình bày logic, sạch sẽ: 1 điểm\n- Áp dụng đúng công thức: 2 điểm\n- Kết quả chính xác: 2 điểm",
+        height=150
     )
     
     question_data.update({
@@ -584,6 +723,7 @@ def validate_and_save_question(question_data, is_editing):
         st.error("❌ Vui lòng nhập ít nhất 1 câu trả lời mẫu!")
         return False
     else:
+    
         # Lưu câu hỏi
         if is_editing:
             st.session_state.exam_questions[st.session_state.edit_question_index] = question_data
@@ -767,7 +907,7 @@ def show_preview_tab():
         if question.get('image_data'):
             try:
                 image_bytes = base64.b64decode(question['image_data'])
-                st.image(image_bytes, caption=f"Hình ảnh câu {i+1}", use_column_width=True)
+                st.image(image_bytes, caption=f"Hình ảnh câu {i+1}", width=300)
             except Exception as e:
                 st.error(f"Lỗi hiển thị hình ảnh câu {i+1}: {e}")
         
@@ -797,7 +937,7 @@ def show_preview_tab():
         
         st.divider()
 
-def show_complete_tab(user):
+def show_complete_tab(user,is_editing=False):
     """Tab hoàn thành và lưu đề thi"""
     st.subheader("🚀 Hoàn thành đề thi")
     
@@ -832,18 +972,20 @@ def show_complete_tab(user):
         return
     
     # Tùy chọn lưu
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**📝 Lưu nháp**")
-        if st.button("💾 Lưu nháp", use_container_width=True, type="secondary"):
-            save_exam_as_draft(user)
-    
-    with col2:
-        st.write("**🚀 Phát hành ngay**")
-        if st.button("🚀 Phát hành đề thi", use_container_width=True, type="primary"):
-            publish_exam(user)
-
+    if is_editing:
+        st.write("**🚀 Cập nhật thay đổi**")
+        if st.button("💾 Lưu thay đổi", use_container_width=True, type="primary"):
+            update_existing_exam(user)
+    else: # Đang tạo mới hoặc nhân bản
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**📝 Lưu nháp**")
+            if st.button("💾 Lưu nháp", use_container_width=True, type="secondary"):
+                save_exam_as_draft(user)
+        with col2:
+            st.write("**🚀 Phát hành ngay**")
+            if st.button("🚀 Phát hành đề thi", use_container_width=True, type="primary"):
+                publish_exam(user)
 def validate_exam():
     """Validate đề thi trước khi lưu"""
     validation_issues = []
@@ -875,7 +1017,7 @@ def save_exam_as_draft(user):
             title=exam_data['title'],
             description=exam_data['description'],
             class_id=exam_data['class_id'],
-            teacher_id=exam_data['teacher_id'],
+            # teacher_id=exam_data['teacher_id'],
             questions=exam_data['questions'],
             time_limit=exam_data['time_limit'],
             start_time=exam_data['start_time'],
@@ -913,7 +1055,7 @@ def publish_exam(user):
             title=exam_data['title'],
             description=exam_data['description'],
             class_id=exam_data['class_id'],
-            teacher_id=exam_data['teacher_id'],
+            # teacher_id=exam_data['teacher_id'],
             questions=exam_data['questions'],
             time_limit=exam_data['time_limit'],
             start_time=exam_data['start_time'],
@@ -948,8 +1090,22 @@ def publish_exam(user):
 
 def prepare_exam_data(user, is_published=True):
     """Chuẩn bị dữ liệu đề thi để lưu"""
-    start_datetime = datetime.combine(st.session_state.exam_start_date, st.session_state.exam_start_time)
-    end_datetime = datetime.combine(st.session_state.exam_end_date, st.session_state.exam_end_time)
+    # 1. Kết hợp ngày và giờ để tạo datetime "naive" từ lựa chọn của người dùng
+    naive_start_datetime = datetime.combine(st.session_state.exam_start_date, st.session_state.exam_start_time)
+    naive_end_datetime = datetime.combine(st.session_state.exam_end_date, st.session_state.exam_end_time)
+
+    # 2. Gán múi giờ địa phương (đã định nghĩa ở đầu file) để biến nó thành "aware"
+    aware_start_datetime = LOCAL_TIMEZONE.localize(naive_start_datetime)
+    aware_end_datetime = LOCAL_TIMEZONE.localize(naive_end_datetime)
+
+    # 3. Chuyển đổi thành chuỗi ISO 8601 chuẩn. 
+    # Chuỗi này sẽ chứa thông tin múi giờ (ví dụ: ...+07:00)
+    start_time_iso = aware_start_datetime.isoformat()
+    end_time_iso = aware_end_datetime.isoformat()
+
+    # (Tùy chọn) In ra để debug, bạn có thể xóa sau khi xác nhận
+    print(f"DEBUG (Teacher Side): Start time selected (local): {aware_start_datetime}")
+    print(f"DEBUG (Teacher Side): Start time to be saved (ISO): {start_time_iso}")
     
     processed_questions = []
     for i, q in enumerate(st.session_state.exam_questions):
@@ -992,10 +1148,10 @@ def prepare_exam_data(user, is_published=True):
         'description': st.session_state.get('exam_description', ''),
         'instructions': st.session_state.get('exam_instructions', ''),
         'class_id': st.session_state.exam_class_id,
-        'teacher_id': user['id'],
+        # 'teacher_id': user['id'],
         'time_limit': st.session_state.exam_time_limit,
-        'start_time': start_datetime.isoformat(),
-        'end_time': end_datetime.isoformat(),
+        'start_time': start_time_iso,
+        'end_time': end_time_iso,
         'is_published': is_published,
         'questions': processed_questions
     }
@@ -1009,6 +1165,7 @@ def clear_exam_data():
         'exam_class_id', 'exam_class_name', 'exam_time_limit',
         'exam_start_date', 'exam_start_time', 'exam_end_date', 'exam_end_time',
         'exam_questions', 'current_question', 'edit_question_index'
+        'editing_exam_id_value'
     ]
     
     for key in keys_to_clear:

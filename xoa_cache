@@ -1,0 +1,13 @@
+import os
+import shutil
+
+def delete_pycache_dirs(root_path="."):
+    """Xóa tất cả các thư mục __pycache__ trong root_path."""
+    for dirpath, dirnames, filenames in os.walk(root_path):
+        if "__pycache__" in dirnames:
+            pycache_path = os.path.join(dirpath, "__pycache__")
+            print(f"🗑️  Đang xóa: {pycache_path}")
+            shutil.rmtree(pycache_path)
+
+# Gọi hàm
+delete_pycache_dirs()

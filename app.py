@@ -2,32 +2,9 @@ import streamlit as st
 import os
 import sys
 from datetime import datetime
-
-# ==============================================================================
-# BỘ KHỞI ĐỘNG DỰ ÁN (Project Bootstrapper)
-# Đoạn code này đảm bảo Python có thể tìm thấy các module trong dự án
-# một cách chính xác, bất kể bạn chạy lệnh từ đâu.
-# ------------------------------------------------------------------------------
-try:
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    if current_dir not in sys.path:
-        sys.path.insert(0, current_dir)
-except Exception as e:
-    st.error(f"Lỗi khởi tạo đường dẫn hệ thống: {e}")
-    st.stop()
-# ==============================================================================
-
-# Import các module của dự án
-try:
-    from auth.login import show_login_page, check_authentication, get_current_user
-    from teacher.dashboard import teacher_dashboard
-    from student.dashboard import student_dashboard
-except ImportError as e:
-    st.error(f"❌ Lỗi Import Module Quan Trọng: {e}")
-    st.error("Vui lòng kiểm tra lại cấu trúc thư mục và đảm bảo các file `__init__.py` tồn tại.")
-    st.info("Gợi ý: Lỗi này thường xảy ra khi một file được import bị thiếu hoặc có lỗi cú pháp bên trong.")
-    st.stop()
-
+from admin.manage_users import show_manage_users
+from admin.exam_management import show_exam_management
+from admin.grading import show_grading
 # --- Cấu hình trang và CSS ---
 st.set_page_config(
     page_title="Hệ thống Thi Trực tuyến",
@@ -154,6 +131,36 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+# ==============================================================================
+# BỘ KHỞI ĐỘNG DỰ ÁN (Project Bootstrapper)
+# Đoạn code này đảm bảo Python có thể tìm thấy các module trong dự án
+# một cách chính xác, bất kể bạn chạy lệnh từ đâu.
+# ------------------------------------------------------------------------------
+try:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+except Exception as e:
+    st.error(f"Lỗi khởi tạo đường dẫn hệ thống: {e}")
+    st.stop()
+# ==============================================================================
+
+# Import các module của dự án
+try:
+    from auth.login import show_login_page, is_logged_in, get_current_user, logout_user
+    from admin.manage_users import show_manage_users
+    from admin.class_management import show_manage_classes
+    from admin.student_management import show_manage_students
+    # <<< THAY ĐỔI Ở ĐÂY: Import exam_creation.py >>>
+    from admin.exam_creation import show_create_exam 
+    from admin.exam_management import show_exam_management
+    from student.dashboard import student_dashboard 
+except ImportError as e:
+    st.error(f"❌ Lỗi Import Module Quan Trọng: {e}")
+    st.stop()
+
+
+
 
 def initialize_app():
     """
@@ -172,35 +179,33 @@ def initialize_app():
 def show_sidebar():
     """Hiển thị sidebar và menu điều hướng."""
     with st.sidebar:
-        st.markdown("<h2 style='text-align: center;'>🎓 Exam System</h2>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align: center;'>🎓 Hệ thống thi trực tuyến</h4>", unsafe_allow_html=True)
         st.markdown("---")
         
         user = get_current_user()
-        if not user:
-            return
+        if not user: return
 
-        role_emoji = "👨‍🏫" if user['role'] == 'teacher' else "👨‍🎓"
-        role_name = "Giáo viên" if user['role'] == 'teacher' else "Học sinh"
+        role_map = { "student": "👨‍🎓 Học sinh", "admin": "👨‍💼 Quản trị"}
+        role_display = role_map.get(user['role'], "👤 Người dùng")
         
         st.markdown(f"""
             <div class='info-box'>
-                <h4>{role_emoji} {role_name}</h4>
+                <h4>{role_display}</h4>
                 <p><strong>{user.get('ho_ten', 'N/A')}</strong> (@{user.get('username', 'N/A')})</p>
             </div>
         """, unsafe_allow_html=True)
-        st.markdown("---")
+        st.divider()
         
-        # Menu điều hướng dựa theo role
-        if user['role'] == 'teacher':
-            show_teacher_menu()
-        else:
+        # ĐIỀU HƯỚNG MENU ĐÚNG CÁCH
+        if user['role'] == 'student':
             show_student_menu()
+        elif user['role'] == 'admin':
+            show_admin_menu()
 
-        st.markdown("---")
-        
-        # Nút đăng xuất
+        st.divider()
         if st.button("🚪 Đăng xuất", use_container_width=True):
-            logout_user()
+            logout_user_session() # Hàm logout nên được gọi từ auth.login
+            st.rerun()
             
         # Thông tin hệ thống
         st.markdown(f"""
@@ -211,55 +216,45 @@ def show_sidebar():
             </div>
         """, unsafe_allow_html=True)
 
-def show_teacher_menu():
-    """Hiển thị menu cho giáo viên"""
-    st.markdown("### 👨‍🏫 Menu Giáo viên")
-    
-    menu_items = [
-        ("🏫 Quản lý Lớp học", "manage_classes", "Tạo và quản lý lớp học"),
-        ("👥 Quản lý Học sinh", "manage_students", "Thêm, xóa học sinh"),
-        ("📝 Tạo Đề thi", "create_exam", "Tạo đề thi mới"),
-        ("✅ Chấm bài", "grading", "Chấm và đánh giá bài thi"),
-        ("📊 Thống kê", "statistics", "Xem báo cáo và thống kê")
-    ]
-    
-    current_page = st.session_state.get("current_page", "manage_classes")
-    
-    for item_name, page_key, description in menu_items:
-        # Highlight nút hiện tại
-        button_type = "primary" if current_page == page_key else "secondary"
-        
-        if st.button(item_name, use_container_width=True, key=f"btn_{page_key}", type=button_type):
-            st.session_state.current_page = page_key
-            st.rerun()
-        
-        # Hiển thị mô tả ngắn
-        st.caption(description)
+
 
 def show_student_menu():
-    """Hiển thị menu cho học sinh"""
     st.markdown("### 👨‍🎓 Menu Học sinh")
-    
     menu_items = [
-        ("📚 Lớp học của tôi", "my_classes", "Xem các lớp đã tham gia"),
-        ("📝 Làm bài thi", "take_exam", "Tham gia bài thi"),
-        ("📊 Xem kết quả", "view_results", "Kết quả các bài thi")
+        ("📚 Lớp học của tôi", "my_classes"),
+        ("📝 Làm bài thi", "take_exam"),
+        ("📊 Xem kết quả", "view_results")
     ]
-    
-    current_page = st.session_state.get("current_page", "my_classes")
-    
-    for item_name, page_key, description in menu_items:
-        # Highlight nút hiện tại
-        button_type = "primary" if current_page == page_key else "secondary"
-        
-        if st.button(item_name, use_container_width=True, key=f"btn_{page_key}", type=button_type):
-            st.session_state.current_page = page_key
+    for name, key in menu_items:
+        if st.button(name, use_container_width=True, key=f"btn_{key}"):
+            if key == "take_exam" and "selected_class_id" in st.session_state:
+                del st.session_state.selected_class_id
+            st.session_state.current_page = key
             st.rerun()
-        
-        # Hiển thị mô tả ngắn
-        st.caption(description)
+def show_admin_menu():
+    st.markdown("### 👨‍💼 Menu Quản trị")
+    menu_items = [
+        ("👥 Quản lý Người dùng", "manage_users"),
+        ("🏫 Quản lý Lớp học", "manage_classes"),
+        ("👥 Quản lý Học sinh", "manage_students"),
+        # Thống nhất key là "create_exam"
+        ("📝 Tạo/Sửa Đề thi", "create_exam"), 
+        ("📚 Quản lý Đề thi", "exam_management"),
+        ("✅ Chấm bài", "grading"),
+        ("🏫 Quản lý Hệ thống", "system_manage"),
+        ("📊 Thống kê Tổng quan", "system_statistics")
+    ]
+    for name, key in menu_items:
+        # Nếu đang ở trang create_exam, xóa các id tạm để bắt đầu đề mới
+        if st.button(name, use_container_width=True, key=f"btn_{key}"):
+            if key == 'create_exam':
+                if 'edit_exam_id' in st.session_state: del st.session_state.edit_exam_id
+                if 'clone_exam_id' in st.session_state: del st.session_state.clone_exam_id
+                if 'editing_exam_id_value' in st.session_state: del st.session_state.editing_exam_id_value
 
-def logout_user():
+            st.session_state.current_page = key
+            st.rerun()
+def logout_user_session():
     """Đăng xuất người dùng"""
     # Xóa tất cả session state liên quan đến user
     keys_to_preserve = ['app_initialized', 'theme', 'language']
@@ -349,90 +344,66 @@ def handle_navigation():
         st.rerun()
     
     try:
-        if user['role'] == 'teacher':
-            teacher_dashboard()
+        if user['role'] == 'admin':
+            admin_dashboard()
+        
         else:
             student_dashboard()
     except Exception as e:
         show_error_page("Đã xảy ra lỗi khi tải trang", str(e))
-
+def admin_dashboard():
+    """Router chính cho tất cả các trang của Admin."""
+    # Đặt trang mặc định nếu chưa có
+    page = st.session_state.get('current_page', 'manage_users')
+    
+    if page == "manage_users":
+        show_manage_users()
+    elif page == "manage_classes":
+        show_manage_classes()
+    elif page == "manage_students":
+        show_manage_students()
+    # Thay "manage_exams" bằng "create_exam"
+    elif page == "create_exam": 
+        show_create_exam()
+    elif page == "exam_management":
+        show_exam_management()
+    # Thêm các trang khác vào đây nếu cần
+    elif page == "grading":
+        show_grading()
+    else:
+        # Trang không xác định, quay về trang mặc định
+        st.warning(f"Trang '{page}' không tồn tại. Quay về trang chủ.")
+        st.session_state.current_page = "manage_users"
+        st.rerun()
 def main():
-    """Hàm chính điều khiển luồng của ứng dụng."""
+    if not is_logged_in():
+        show_login_page()
+        return
+
+    user = get_current_user()
+    if not user:
+        st.error("❌ Lỗi phiên đăng nhập!")
+        logout_user()
+        st.rerun()
+        return
+
+    show_sidebar()
+    
+    # st.markdown("<div class='main-header'><h1>🎓 Hệ thống Thi Trực tuyến</h1></div>", unsafe_allow_html=True)
+
+    # ĐIỀU HƯỚNG DASHBOARD ĐÚNG CÁCH
     try:
-        # Bước 1: Khởi tạo ứng dụng
-        initialize_app()
-        
-        # Bước 2: Kiểm tra trạng thái bảo trì (nếu cần)
-        if os.getenv("MAINTENANCE_MODE") == "true":
-            show_maintenance_page()
-            return
-        
-        # Bước 3: Xác thực người dùng
-        if not check_authentication():
-            show_login_page()
-            return
-
-        # Bước 4: Hiển thị giao diện chính
-        user = get_current_user()
-        
-        # Kiểm tra user hợp lệ
-        if not user or not user.get('id'):
-            st.error("❌ Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại.")
-            logout_user()
-            return
-        
-        # Hiển thị sidebar
-        show_sidebar()
-        
-        # Header chính
-        st.markdown("<div class='main-header'><h1>🎓 Hệ thống Thi Trực tuyến</h1></div>", unsafe_allow_html=True)
-        
-        # Bước 5: Điều hướng nội dung
-        handle_navigation()
-        
+        if user['role'] == 'student':
+            student_dashboard()
+        elif user['role'] == 'admin':
+            admin_dashboard()
+        else:
+            st.error(f"❌ Vai trò '{user['role']}' không được hỗ trợ!")
     except Exception as e:
-        # Xử lý lỗi toàn cục
-        st.error(f"❌ Đã xảy ra lỗi nghiêm trọng: {str(e)}")
-        
-        with st.expander("🐛 Thông tin debug"):
-            st.write("**User info:**", st.session_state.get('user'))
-            st.write("**Current page:**", st.session_state.get('current_page'))
-            st.write("**Session state keys:**", list(st.session_state.keys()))
-            st.exception(e)
-        
-        # Tùy chọn khôi phục
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("🔄 Thử lại", use_container_width=True):
-                st.rerun()
-        
-        with col2:
-            if st.button("🏠 Reset và về trang chủ", use_container_width=True):
-                logout_user()
+        st.error(f"❌ Đã xảy ra lỗi nghiêm trọng khi tải trang: {e}")
+        st.exception(e)
 
-# Chức năng hỗ trợ thêm
-def show_app_info():
-    """Hiển thị thông tin ứng dụng"""
-    with st.expander("ℹ️ Thông tin ứng dụng"):
-        st.markdown("""
-        **🎓 Hệ thống Thi Trực tuyến**
-        
-        **Phiên bản:** 1.0.0
-        **Ngày phát hành:** 2024
-        **Công nghệ:** Streamlit + Supabase
-        
-        **Tính năng chính:**
-        - ✅ Quản lý lớp học và học sinh
-        - ✅ Tạo đề thi đa dạng (trắc nghiệm, tự luận, đúng/sai)
-        - ✅ Upload đề thi từ Word với LaTeX
-        - ✅ Thi trực tuyến với timer
-        - ✅ Chấm bài tự động và thủ công
-        - ✅ Thống kê và báo cáo chi tiết
-        - ✅ Giao diện responsive
-        
-        **Hỗ trợ:** admin@examsystem.com
-        """)
+
 
 if __name__ == "__main__":
     main()
